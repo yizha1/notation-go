@@ -62,9 +62,10 @@ func preparePlugin(t *testing.T) string {
 	out := filepath.Join(root, "foo", binName("foo"))
 	cmd := exec.Command("go", "build", "-o", out)
 	cmd.Dir = root
-	err = cmd.Run()
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to build test plugin: %v\n%s", err, output)
 	}
 	return root
 }

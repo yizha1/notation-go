@@ -156,11 +156,9 @@ func (c mockRemoteClient) Do(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusAccepted,
 				Body:       io.NopCloser(bytes.NewReader([]byte(msg))),
-				Request: &http.Request{
-					Header: map[string][]string{},
-				},
+				Request:    req,
 				Header: map[string][]string{
-					"Location": {"test"},
+					"Location": {req.URL.Scheme + "://" + req.URL.Host + "/v2/test/blobs/uploads/test"},
 				},
 			}, nil
 		default:
@@ -202,7 +200,7 @@ func (c mockRemoteClient) Do(req *http.Request) (*http.Response, error) {
 				URL:    &url.URL{Path: "/v2/test/referrers/" + zeroDigest},
 			},
 		}, nil
-	case validRepo:
+	case validRepo, "/v2/test/blobs/uploads/test":
 		return &http.Response{
 			StatusCode: http.StatusCreated,
 			Body:       io.NopCloser(bytes.NewReader([]byte(msg))),

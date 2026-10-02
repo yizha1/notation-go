@@ -25,6 +25,12 @@ on:
 
 jobs:
   build:
+    if: github.repository == 'notaryproject/notation-go'
     uses: notaryproject/notation-core-go/.github/workflows/reusable-build.yml@main
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  fork-build:
+    if: github.repository == 'yizha1/notation-go'
+    uses: yizha1/notation-core-go/.github/workflows/reusable-build.yml@7c17b4f96d246fb14faf764f33f2ea1894708289
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

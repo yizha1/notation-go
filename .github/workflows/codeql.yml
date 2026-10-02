@@ -27,4 +27,8 @@ on:
 
 jobs:
   analyze:
+    if: github.repository == 'notaryproject/notation-go'
     uses: notaryproject/notation-core-go/.github/workflows/reusable-codeql.yml@main
+  fork-analyze:
+    if: github.repository == 'yizha1/notation-go'
+    uses: yizha1/notation-core-go/.github/workflows/reusable-codeql.yml@7c17b4f96d246fb14faf764f33f2ea1894708289

@@ -45,4 +45,4 @@ jobs:
     if: github.repository == 'yizha1/notation-go' && vars.PATCH_TRIAL_ENABLED == 'true'
     permissions:
       contents: write
-    uses: yizha1/notation-core-go/.github/workflows/trial-library.yml@7c17b4f96d246fb14faf764f33f2ea1894708289
+    uses: yizha1/notation-core-go/.github/workflows/trial-library.yml@ebbcc17ae50241ac8b353f09579969c3522ca16d

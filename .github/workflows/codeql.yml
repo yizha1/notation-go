@@ -31,4 +31,4 @@ jobs:
     uses: notaryproject/notation-core-go/.github/workflows/reusable-codeql.yml@main
   fork-analyze:
     if: github.repository == 'yizha1/notation-go'
-    uses: yizha1/notation-core-go/.github/workflows/reusable-codeql.yml@7c17b4f96d246fb14faf764f33f2ea1894708289
+    uses: yizha1/notation-core-go/.github/workflows/reusable-codeql.yml@ebbcc17ae50241ac8b353f09579969c3522ca16d

@@ -75,6 +75,24 @@ func TestParseDistinguishedName(t *testing.T) {
 	}
 }
 
+func TestParseDistinguishedNameEscapedValues(t *testing.T) {
+	for _, input := range []string{
+		`C=US,ST=WA,O=My \"special\" Org \, \; \\ \< \> others`,
+		`C=US,ST=WA,O=My \22special\22 Org \2C \3B \5C \3C \3E others`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			dn, err := ParseDistinguishedName(input)
+			if err != nil {
+				t.Fatalf("ParseDistinguishedName() error = %v", err)
+			}
+			want := `My "special" Org , ; \ < > others`
+			if dn["O"] != want {
+				t.Fatalf("organization = %q, want %q", dn["O"], want)
+			}
+		})
+	}
+}
+
 func TestIsSubsetDN(t *testing.T) {
 	// Test cases
 	tests := []struct {

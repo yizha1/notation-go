@@ -185,7 +185,7 @@ func TestValidateTrustedIdentities(t *testing.T) {
 	// Validate rfc4514 DNs
 	validDN1 := "x509.subject:C=US,ST=WA,O=MyOrg"
 	validDN2 := "x509.subject:C=US,ST=WA,O=  My.  Org"
-	validDN3 := "x509.subject:C=US,ST=WA,O=My \"special\" Org \\, \\; \\\\ others"
+	validDN3 := "x509.subject:C=US,ST=WA,O=My \\\"special\\\" Org \\, \\; \\\\ others"
 	err = validateTrustedIdentities("test-statement-name", []string{validDN1, validDN2, validDN3})
 	if err != nil {
 		t.Fatalf("valid x509.subject identity should not return error. Error : %q", err)
@@ -204,6 +204,76 @@ func TestValidateTrustedIdentities(t *testing.T) {
 	err = validateTrustedIdentities("test-statement-name", []string{multiValuedRUN})
 	if err == nil || err.Error() != "trust policy statement \"test-statement-name\" has trusted identity \"x509.subject:C=US+ST=WA,O=MyOrg\" with invalid identity value: distinguished name (DN) \"C=US+ST=WA,O=MyOrg\" has multi-valued RDN attributes, remove multi-valued RDN attributes as they are not supported" {
 		t.Fatalf("multi-valued RDN should return error. Error : %q", err)
+	}
+}
+
+func TestValidateTrustedIdentitiesSpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity string
+		wantErr  bool
+	}{
+		{
+			name:     "escaped quotation marks",
+			identity: `x509.subject:C=US,ST=WA,O=My \"special\" Org`,
+		},
+		{
+			name:     "hex escaped quotation marks",
+			identity: `x509.subject:C=US,ST=WA,O=My \22special\22 Org`,
+		},
+		{
+			name:     "escaped semicolon",
+			identity: `x509.subject:C=US,ST=WA,O=My\;Org`,
+		},
+		{
+			name:     "escaped angle brackets",
+			identity: `x509.subject:C=US,ST=WA,O=My \<special\> Org`,
+		},
+		{
+			name:     "hex escaped special characters",
+			identity: `x509.subject:C=US,ST=WA,O=My\3B\3Cspecial\3EOrg`,
+		},
+		{
+			name:     "hex escaped null",
+			identity: `x509.subject:C=US,ST=WA,O=My\00Org`,
+		},
+		{
+			name:     "unescaped quotation marks",
+			identity: `x509.subject:C=US,ST=WA,O=My "special" Org`,
+			wantErr:  true,
+		},
+		{
+			name:     "unescaped semicolon",
+			identity: `x509.subject:C=US,ST=WA,O=My;Org`,
+			wantErr:  true,
+		},
+		{
+			name:     "unescaped opening angle bracket",
+			identity: `x509.subject:C=US,ST=WA,O=My <special Org`,
+			wantErr:  true,
+		},
+		{
+			name:     "unescaped closing angle bracket",
+			identity: `x509.subject:C=US,ST=WA,O=My special> Org`,
+			wantErr:  true,
+		},
+		{
+			name:     "unescaped null",
+			identity: "x509.subject:C=US,ST=WA,O=My\x00Org",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTrustedIdentities("test-statement-name", []string{tt.identity})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateTrustedIdentities() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && (!strings.Contains(err.Error(), "invalid identity value") || !strings.Contains(err.Error(), "RFC 4514")) {
+				t.Fatalf("invalid identity error should explain the DN format requirement: %v", err)
+			}
+		})
 	}
 }
 

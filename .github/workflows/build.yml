@@ -31,6 +31,6 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   fork-build:
     if: github.repository == 'yizha1/notation-go'
-    uses: yizha1/notation-core-go/.github/workflows/reusable-build.yml@ebbcc17ae50241ac8b353f09579969c3522ca16d
+    uses: yizha1/notation-core-go/.github/workflows/reusable-build.yml@03171674c94728622c5b1534b5e3396fcb468733
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

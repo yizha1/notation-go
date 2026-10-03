@@ -29,4 +29,8 @@ permissions:
 
 jobs:
   check-license:
+    if: github.repository == 'notaryproject/notation-go'
     uses: notaryproject/notation-core-go/.github/workflows/reusable-license-checker.yml@main
+  fork-check-license:
+    if: github.repository == 'yizha1/notation-go'
+    uses: yizha1/notation-core-go/.github/workflows/reusable-license-checker.yml@03171674c94728622c5b1534b5e3396fcb468733

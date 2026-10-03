@@ -24,3 +24,5 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 )
+
+replace github.com/notaryproject/notation-core-go => github.com/yizha1/notation-core-go v1.3.1-trial.4

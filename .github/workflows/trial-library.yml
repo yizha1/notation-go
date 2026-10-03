@@ -25,6 +25,10 @@ jobs:
   core-dependency:
     if: github.repository == 'yizha1/notation-go' && vars.PATCH_TRIAL_ENABLED == 'true'
     runs-on: ubuntu-24.04
+    env:
+      GOWORK: 'off'
+      CORE_BASE_VERSION: v1.3.0
+      CORE_COMMIT: 03171674c94728622c5b1534b5e3396fcb468733
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -33,11 +37,21 @@ jobs:
         with:
           go-version: stable
           check-latest: true
-      - name: Require the released core fork trial dependency
+      - name: Require the pinned core trial commit
+        shell: bash
         run: |
-          dependency=$(go list -m -f '{{if .Replace}}{{.Replace.Path}}@{{.Replace.Version}}{{end}}' github.com/notaryproject/notation-core-go)
-          if [[ ! "$dependency" =~ ^github\.com/yizha1/notation-core-go@v[0-9]+\.[0-9]+\.[0-9]+-trial\.[1-9][0-9]*$ ]]; then
-            echo "Expected a versioned core fork trial replacement, got: $dependency" >&2
+          core_module=$(go list -m -json "github.com/yizha1/notation-core-go@$CORE_COMMIT")
+          if ! jq -e --arg commit "$CORE_COMMIT" \
+            '.Path == "github.com/yizha1/notation-core-go" and .Origin.Hash == $commit and (.Version | type == "string" and startswith("v"))' \
+            <<< "$core_module" > /dev/null; then
+            echo "::error::Could not resolve the pinned core trial commit $CORE_COMMIT"
+            exit 1
+          fi
+          core_version=$(jq -r '.Version' <<< "$core_module")
+          dependency=$(go list -m -f '{{.Version}} {{if .Replace}}{{.Replace.Path}}@{{.Replace.Version}}{{end}}' github.com/notaryproject/notation-core-go)
+          expected="$CORE_BASE_VERSION github.com/yizha1/notation-core-go@$core_version"
+          if [[ "$dependency" != "$expected" ]]; then
+            echo "::error::Expected $expected; got $dependency"
             exit 1
           fi
   trial:
@@ -45,4 +59,4 @@ jobs:
     if: github.repository == 'yizha1/notation-go' && vars.PATCH_TRIAL_ENABLED == 'true'
     permissions:
       contents: write
-    uses: yizha1/notation-core-go/.github/workflows/trial-library.yml@ebbcc17ae50241ac8b353f09579969c3522ca16d
+    uses: yizha1/notation-core-go/.github/workflows/trial-library.yml@03171674c94728622c5b1534b5e3396fcb468733

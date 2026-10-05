@@ -579,11 +579,11 @@ def check_publisher_guard(api, repository, branch):
         raise ValueError("Install the monthly automation-actor guard in release-github.yml on the release branch before enabling monthly publication")
 
 
-def coordinator_authorization(api, repository, mode, month, plan=None, allow_previous=False):
+def coordinator_authorization(api, repository, mode, month, plan=None, allow_previous=False, notification=False):
     if mode == "dry-run":
         return None
     from notation_release_controller import worker_authorization
-    return worker_authorization(api, repository, month, plan, allow_previous)
+    return worker_authorization(api, repository, month, plan, allow_previous, notification)
 
 
 def prepare(api, repository, mode, month, directory, output, start=False, reconcile=False):
@@ -1023,7 +1023,7 @@ def main():
         elif args.command == "announce":
             result = announce(api, args.repository, args.mode, args.tag)
         elif args.command == "notify-controller":
-            authorization = coordinator_authorization(api, args.repository, args.mode, args.month)
+            authorization = coordinator_authorization(api, args.repository, args.mode, args.month, notification=True)
             if authorization is None:
                 raise ValueError("Controller notification requires a dispatched coordinator worker")
             api.request("repos/yizha1/notation/dispatches", "POST", {

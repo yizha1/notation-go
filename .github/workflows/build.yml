@@ -21,4 +21,5 @@ on:
 
 jobs:
   build:
-    uses: notaryproject/notation-core-go/.github/workflows/reusable-build.yml@main
+    # Pin the reviewed fork workflow without a Codecov secret requirement.
+    uses: yizha1/notation-core-go/.github/workflows/reusable-build.yml@e803aedd3ff0365651e5bf88189c3892670ff566

@@ -255,7 +255,10 @@ steps before requesting an all-three publishing rehearsal:
    in core tests, use supported error-format verbs in Go's plugin protocol, and
    name CLI examples after real methods. Core's existing live timestamp test
    derives the expected revoked subject from the validated response rather than
-   a hard-coded 2024 certificate name. No new runtime coverage is added.
+   a hard-coded 2024 certificate name. Go's registry mock supplies a same-host
+   upload URL, and its DN fixture uses real RFC 4514 quotation-mark escapes;
+   both work before and after the ORAS/LDAP upgrades. The fork source README
+   explains the stricter LDAP policy validation. No new runtime coverage is added.
 3. Install `notation-fork-ci.yml` and its qualification helpers on the isolated
    branches. It runs source tests, race/vet/tidy, license and CVE gates against
    the declared minimum Go and stable Go, including source CLI E2E. Its source

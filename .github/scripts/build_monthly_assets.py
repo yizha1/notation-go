@@ -17,12 +17,12 @@ import argparse
 import gzip
 import hashlib
 import pathlib
-import subprocess
 import tempfile
 
 from monthly_release import git
 from monthly_release_checks import (
-    PLATFORMS, asset_names, checked, extract_binary, scan, verify_checksums, verify_metadata,
+    PLATFORMS, asset_names, checked, extract_binary, library_source_archive, scan,
+    verify_checksums, verify_metadata,
 )
 
 
@@ -36,13 +36,8 @@ def build(source, repository, tag, commit, evidence):
     dist = source / "dist"
     dist.mkdir(exist_ok=True)
     if project != "notation":
-        archive = subprocess.run(
-            ["git", "archive", "--format=tar", f"--prefix={project}-{tag.removeprefix('v')}/", commit],
-            cwd=source, capture_output=True,
-        )
-        if archive.returncode:
-            raise ValueError(f"Source archive failed: {archive.stderr.decode('utf-8')}")
-        (dist / names[0]).write_bytes(gzip.compress(archive.stdout, mtime=0))
+        archive = library_source_archive(source, project, tag, commit)
+        (dist / names[0]).write_bytes(gzip.compress(archive, mtime=0))
         (dist / names[1]).write_text(f"{hashlib.sha256((dist / names[0]).read_bytes()).hexdigest()}  {names[0]}\n")
     archives = verify_checksums(dist, project, tag)
     if project == "notation":

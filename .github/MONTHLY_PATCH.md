@@ -85,6 +85,10 @@ scan the vulnerable base. The worker records every remaining blocker and waits
 without preparing a release candidate until all scoped PRs qualify. Rebasing
 an assessed PR still requires a fresh assessment and explicit replan.
 
+Library packaging and public verification disable Git's automatic CRLF
+conversion for the archive command, without changing repository configuration.
+Windows compares the same canonical archive bytes as Linux and macOS.
+
 After successful public package verification, the controller can dispatch the
 next included repository. Consumer workers pin the plan's verified producer
 versions rather than adopting arbitrary newer releases midway through the cycle.

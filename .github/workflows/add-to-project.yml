@@ -18,6 +18,7 @@ on:
 
 jobs:
   add-to-project:
+    if: github.repository == 'notaryproject/notation-go'
     name: Add issue to project
     runs-on: ubuntu-latest
     steps:

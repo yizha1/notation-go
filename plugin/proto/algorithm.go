@@ -64,7 +64,7 @@ func EncodeKeySpec(k signature.KeySpec) (plugin.KeySpec, error) {
 			return plugin.KeySpecRSA4096, nil
 		}
 	}
-	return "", fmt.Errorf("invalid KeySpec %q", k)
+	return "", fmt.Errorf("invalid KeySpec %v", k)
 }
 
 // DecodeKeySpec parses keySpec name to a signature.keySpec type.
@@ -135,7 +135,7 @@ func HashAlgorithmFromKeySpec(k signature.KeySpec) (plugin.HashAlgorithm, error)
 			return plugin.HashAlgorithmSHA512, nil
 		}
 	}
-	return "", fmt.Errorf("invalid KeySpec %q", k)
+	return "", fmt.Errorf("invalid KeySpec %v", k)
 }
 
 // SignatureAlgorithm is the type of signature algorithm
@@ -176,7 +176,7 @@ func EncodeSigningAlgorithm(alg signature.Algorithm) (plugin.SignatureAlgorithm,
 	case signature.AlgorithmPS512:
 		return plugin.SignatureAlgorithmRSASSA_PSS_SHA512, nil
 	}
-	return "", fmt.Errorf("invalid algorithm %q", alg)
+	return "", fmt.Errorf("invalid algorithm %v", alg)
 }
 
 // DecodeSigningAlgorithm parses the signing algorithm name from a given string.

@@ -24,6 +24,7 @@ from unittest.mock import patch
 
 import monthly_release as release
 import notation_release_controller as coordinator
+import notation_fork_propagation as propagation
 from test_monthly_release import FakeGitHub, plan as worker_plan, body, pull
 from test_monthly_release_checks import scanner_messages, stream
 
@@ -654,6 +655,27 @@ class WorkerAuthorizationTests(unittest.TestCase):
             coordinator.worker_authorization(self.api, GO, MONTH)
         with self.assertRaises(ValueError):
             coordinator.worker_authorization(self.api, "notaryproject/notation-core-go", MONTH)
+
+    def test_propagation_reassessment_checkpoint_excludes_receipts_already_in_the_base(self):
+        plan = worker_plan(GO, "rehearse", MONTH, "waiting")
+        plan["merged"] = [{"number": 6, "commit": BRANCH}, {"number": 3, "commit": MAIN}]
+        snapshot = {"snapshot": {"main_head": BRANCH}}
+        with patch.object(release, "Cycle") as cycle, patch.object(coordinator, "worker_authorization"), \
+             patch.object(coordinator, "compare_commits", return_value={MAIN}):
+            cycle.return_value.state = plan
+            self.assertEqual(propagation.source_head(self.api, plan, snapshot), MAIN)
+
+    def test_propagation_checkpoint_still_rejects_missing_or_unapproved_post_checkpoint_merges(self):
+        plan = worker_plan(GO, "rehearse", MONTH, "waiting")
+        plan["merged"] = [{"number": 6, "commit": BRANCH}, {"number": 3, "commit": MAIN},
+                          {"number": 4, "commit": PR_HEAD}]
+        for commits in ({MAIN}, {MAIN, PR_HEAD, AUTOMATION}):
+            with self.subTest(commits=commits), patch.object(release, "Cycle") as cycle, \
+                 patch.object(coordinator, "worker_authorization"), \
+                 patch.object(coordinator, "compare_commits", return_value=commits), \
+                 self.assertRaisesRegex(ValueError, "outside the approved"):
+                cycle.return_value.state = plan
+                propagation.source_head(self.api, plan, {"snapshot": {"main_head": BRANCH}})
 
     def test_missing_stale_or_changed_receipt_is_rejected(self):
         for variable, value in (("MONTHLY_PATCH_CONTROLLER_ISSUE", ""), ("MONTHLY_PATCH_CONTROLLER_PLAN", "0" * 64),

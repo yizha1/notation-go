@@ -15,9 +15,18 @@ version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
+    target-branch: monthly-patch-test-main
+    open-pull-requests-limit: 5
     schedule:
-      interval: "weekly"
+      interval: "daily"
+    ignore:
+      - dependency-name: github.com/notaryproject/notation-core-go
+    groups:
+      fork-dependencies:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: monthly-patch-test-main
     schedule:
       interval: "weekly"

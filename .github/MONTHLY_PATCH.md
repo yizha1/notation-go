@@ -79,6 +79,12 @@ CI, a clean mergeable head, and satisfied required reviews. It uses normal
 GitHub squash merges pinned to the observed head SHA. It never invokes an
 administrative merge or resolves conflicts automatically.
 
+An unready scoped PR does not block another scoped PR whose checks qualify it.
+This lets a checked module CVE fix merge before Actions-only PRs that still
+scan the vulnerable base. The worker records every remaining blocker and waits
+without preparing a release candidate until all scoped PRs qualify. Rebasing
+an assessed PR still requires a fresh assessment and explicit replan.
+
 After successful public package verification, the controller can dispatch the
 next included repository. Consumer workers pin the plan's verified producer
 versions rather than adopting arbitrary newer releases midway through the cycle.

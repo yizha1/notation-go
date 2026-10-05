@@ -493,7 +493,7 @@ def signing_environment(path, api):
     if not any(item["key"].split()[:2] == public for item in keys):
         raise ValueError("Release key is not registered as the declared GitHub user's SSH signing key")
     settings = {
-        "user.name": os.environ.get("MONTHLY_PATCH_SIGNER_NAME", "Monthly dependency release"),
+        "user.name": os.environ.get("MONTHLY_PATCH_SIGNER_NAME") or "Monthly dependency release",
         "user.email": email, "gpg.format": "ssh", "user.signingkey": str(key_path),
         "commit.gpgsign": "true",
     }
@@ -680,6 +680,7 @@ def prepare(api, repository, mode, month, directory, output, start=False, reconc
     with tempfile.TemporaryDirectory(prefix="monthly-signing-") as signing:
         environment = signing_environment(signing, api)
         cycle.save(state)
+        blocked = []
         for initial in open_pulls:
             pull = api.request(f"repos/{repository}/pulls/{initial['number']}")
             if not eligible(pull) or pull.get("state") != "open":
@@ -691,9 +692,8 @@ def prepare(api, repository, mode, month, directory, output, start=False, reconc
             check_files(api, repository, pull["number"])
             ready, reason = checks_ready(pull, api.checks(repository, pull["number"]))
             if not ready:
-                state.update(status="waiting", reason=f"Dependabot #{pull['number']}: {reason}")
-                cycle.save(state)
-                return {**state, "action": "waiting"}
+                blocked.append(f"Dependabot #{pull['number']}: {reason}")
+                continue
             merged = api.request(
                 f"repos/{repository}/pulls/{pull['number']}/merge", "PUT",
                 {"sha": pull["head"]["sha"], "merge_method": "squash"},
@@ -702,6 +702,10 @@ def prepare(api, repository, mode, month, directory, output, start=False, reconc
                 raise ValueError("GitHub did not confirm a normal, non-bypass squash merge")
             state["merged"].append({"number": pull["number"], "commit": merged["sha"]})
             cycle.save(state)
+        if blocked:
+            state.update(status="waiting", reason="; ".join(blocked))
+            cycle.save(state)
+            return {**state, "action": "waiting"}
         waiting = producer_lag(api, repository, state["main"], mode, producers)
         if waiting:
             state.update(status="waiting", reason="; ".join(waiting))

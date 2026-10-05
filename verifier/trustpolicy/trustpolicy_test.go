@@ -185,7 +185,7 @@ func TestValidateTrustedIdentities(t *testing.T) {
 	// Validate rfc4514 DNs
 	validDN1 := "x509.subject:C=US,ST=WA,O=MyOrg"
 	validDN2 := "x509.subject:C=US,ST=WA,O=  My.  Org"
-	validDN3 := "x509.subject:C=US,ST=WA,O=My \"special\" Org \\, \\; \\\\ others"
+	validDN3 := "x509.subject:C=US,ST=WA,O=My \\\"special\\\" Org \\, \\; \\\\ others"
 	err = validateTrustedIdentities("test-statement-name", []string{validDN1, validDN2, validDN3})
 	if err != nil {
 		t.Fatalf("valid x509.subject identity should not return error. Error : %q", err)

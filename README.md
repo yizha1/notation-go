@@ -16,12 +16,28 @@ Please visit [README](https://github.com/notaryproject/.github/blob/main/README.
 ## Table of Contents
 
 - [Documentation](#documentation)
+- [Trusted identity escaping](#trusted-identity-escaping)
 - [Code of Conduct](#code-of-conduct)
 - [License](#license)
  
 ## Documentation
 
 Library documentation is available at [Go Reference](https://pkg.go.dev/github.com/notaryproject/notation-go).
+
+## Trusted identity escaping
+
+When upgraded to LDAP `v3.4.14`, trust-policy validation enforces RFC 4514
+escaping for `x509.subject` distinguished names. Previously tolerated unescaped
+quotation marks, semicolons, angle brackets, and NULL characters in attribute
+values are rejected. Escape these characters in the DN and escape the
+backslashes again in JSON. An organization named `My "special" Org` uses:
+
+```json
+"x509.subject:C=US,ST=WA,O=My \\\"special\\\" Org"
+```
+
+Correctly escaped identities retain the same attribute values. Policies are
+not rewritten automatically, and identity validation is not relaxed.
 
 ## Code of Conduct
 

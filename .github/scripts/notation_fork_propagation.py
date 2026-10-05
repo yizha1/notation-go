@@ -39,7 +39,9 @@ def source_head(api, plan, authorization):
     expected = authorization["snapshot"]["main_head"]
     if head != expected:
         ahead = controller.compare_commits(api, plan["repository"], expected, head)
-        approved = {item["commit"] for item in cycle.state["merged"]}
+        merged = cycle.state["merged"]
+        checkpoint = next((index for index, item in enumerate(merged) if item["commit"] == expected), -1)
+        approved = {item["commit"] for item in merged[checkpoint + 1:]}
         if ahead != approved:
             raise ValueError("Isolated main advanced outside the approved dependency merges")
     return head

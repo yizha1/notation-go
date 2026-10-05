@@ -343,6 +343,13 @@ def validate_state(state):
         if decision == "skip" and node["status"] != "skipped" or decision == "defer" and node["status"] != "deferred":
             raise ValueError("Agent decision changed during execution")
         snapshot = plan["snapshots"][repository]
+        recovery = snapshot.get("verification_recovery")
+        if recovery is not None and (
+            not isinstance(recovery, dict) or set(recovery) != {"from_plan_id", "candidate_sha256"}
+            or not all(isinstance(value, str) and DIGEST.fullmatch(value) for value in recovery.values())
+            or decision != "release"
+        ):
+            raise ValueError("Invalid verification-only recovery receipt")
         release.validate_plan({"schema": 1, "repository": repository, "mode": "rehearse", "month": state["month"],
                                **{key: snapshot[key] for key in ("baseline", "main", "branch", "tag")}, "status": "merging"})
         if node.get("run_id") is not None:
@@ -403,7 +410,9 @@ class Controller:
             raise ValueError("Controller state write was not confirmed by the trusted actor")
         return result
 
-    def approve(self, plan, source_run, replan=False):
+    def approve(self, plan, source_run, replan=False, recover_public_verification=False):
+        if recover_public_verification and not replan:
+            raise ValueError("Public verification recovery requires an explicit replan")
         if any(item["decision"] == "defer" for item in plan["decisions"].values()):
             raise ValueError("Resolve deferrals and reassess before approving a release cycle")
         records = self.records()
@@ -412,10 +421,14 @@ class Controller:
                 if state["plan"]["plan_id"] != plan["plan_id"]:
                     if not replan:
                         raise ValueError("This month already has an immutable approved plan")
-                    return self.replan(issue, state, plan, source_run)
+                    return self.replan(issue, state, plan, source_run, recover_public_verification)
+                if recover_public_verification:
+                    raise ValueError("Verification recovery requires a fresh changed assessment")
                 return issue, state
             if state["status"] == "active":
                 raise ValueError("Finish the active cycle before approving another month")
+        if recover_public_verification:
+            raise ValueError("Verification recovery requires an existing approved cycle")
         when = datetime.datetime.fromisoformat(plan["collected_at"])
         age = datetime.datetime.now(datetime.timezone.utc) - when
         if age < datetime.timedelta(0) or age > datetime.timedelta(days=7):
@@ -443,7 +456,7 @@ class Controller:
             state["status"] = "completed"
         return self.save(None, state), state
 
-    def replan(self, issue, state, plan, source_run):
+    def replan(self, issue, state, plan, source_run, recover_public_verification=False):
         if state["status"] != "active" or any(node["status"] in {"dispatching", "running"} for node in state["nodes"].values()):
             raise ValueError("Cannot revise a completed cycle or an in-flight worker")
         when = datetime.datetime.fromisoformat(plan["collected_at"])
@@ -451,6 +464,7 @@ class Controller:
         if age < datetime.timedelta(0) or age > datetime.timedelta(days=7):
             raise ValueError("Replacement assessment is stale")
         updated = copy.deepcopy(plan)
+        recovered = False
         for repository, node in state["nodes"].items():
             previous = state["plan"]["snapshots"][repository]
             if node["status"] in TERMINAL:
@@ -459,10 +473,38 @@ class Controller:
                 updated["decisions"][repository] = state["plan"]["decisions"][repository]
                 updated["snapshots"][repository] = previous
                 continue
+            if self.api.optional(f"repos/{repository}/git/ref/tags/{previous['tag']}") is not None:
+                if not recover_public_verification:
+                    raise ValueError("An immutable public candidate must be recovered, not replanned")
+                cycle = release.Cycle(self.api, repository, state["month"], "rehearse")
+                candidate = cycle.state
+                if (candidate is None or candidate["status"] != "verifying"
+                        or candidate.get("controller_issue") != issue["number"]
+                        or candidate.get("controller_plan_id") != state["plan"]["plan_id"]
+                        or any(candidate.get(key) != previous[key] for key in ("baseline", "main", "branch", "tag"))):
+                    raise ValueError("Recovery requires this approved cycle's exact public verification candidate")
+                snapshot = updated["snapshots"][repository]
+                if (any(snapshot[key] != previous[key] for key in ("baseline", "main", "branch", "workflow_id"))
+                        or snapshot["release_head"] != candidate["commit"]):
+                    raise ValueError("Recovery cannot change the public candidate or its release branch")
+                for name, expected in ((snapshot["main"], snapshot["main_head"]), (snapshot["branch"], candidate["commit"]),
+                                       ("main", snapshot["automation_sha"])):
+                    if self.api.request(f"repos/{repository}/branches/{name}")["commit"]["sha"] != expected:
+                        raise ValueError("Verification recovery assessment refs are stale")
+                release.assert_tag(self.api, candidate)
+                release.check_public_assets(self.api, candidate)
+                updated["decisions"][repository] = state["plan"]["decisions"][repository]
+                updated["snapshots"][repository] = {
+                    **previous, "automation_sha": snapshot["automation_sha"],
+                    "verification_recovery": {
+                        "from_plan_id": state["plan"]["plan_id"],
+                        "candidate_sha256": digest({key: candidate[key] for key in ("tag", "commit", "assets")}),
+                    },
+                }
+                recovered = True
+                continue
             if updated["decisions"][repository]["decision"] != state["plan"]["decisions"][repository]["decision"]:
                 raise ValueError("Reassessment may refresh refs, not silently change the release DAG")
-            if self.api.optional(f"repos/{repository}/git/ref/tags/{previous['tag']}") is not None:
-                raise ValueError("An immutable public candidate must be recovered, not replanned")
             snapshot = updated["snapshots"][repository]
             if any(snapshot[key] != previous[key] for key in ("baseline", "main", "branch", "tag", "release_head")):
                 raise ValueError("Reassessment changed the reserved patch or release baseline")
@@ -470,6 +512,8 @@ class Controller:
                                    ("main", snapshot["automation_sha"])):
                 if self.api.request(f"repos/{repository}/branches/{name}")["commit"]["sha"] != expected:
                     raise ValueError("Replacement assessment refs are stale")
+        if recover_public_verification and not recovered:
+            raise ValueError("Verification recovery requires an existing immutable public candidate")
         previous_id = state["plan"]["plan_id"]
         updated["supersedes"] = previous_id
         updated["plan_id"] = digest({key: value for key, value in updated.items() if key != "plan_id"})
@@ -602,6 +646,17 @@ def worker_authorization(api, repository, month, plan=None, allow_previous=False
     snapshot = state["plan"]["snapshots"][repository]
     if os.environ.get("GITHUB_SHA") != snapshot["automation_sha"] or os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise ValueError("Writing worker must use the assessed default-branch code")
+    recovery = snapshot.get("verification_recovery")
+    if recovery is not None:
+        candidate = release.Cycle(api, repository, month, "rehearse").state
+        if (candidate is None or candidate["status"] != "verifying"
+                or candidate.get("controller_issue") != int(issue_number)
+                or candidate.get("controller_plan_id") not in {plan_id, recovery["from_plan_id"]}
+                or candidate["tag"] != snapshot["tag"]
+                or digest({key: candidate[key] for key in ("tag", "commit", "assets")}) != recovery["candidate_sha256"]):
+            raise ValueError("Verification recovery cannot change or rebuild its immutable public candidate")
+        release.assert_tag(api, candidate)
+        release.check_public_assets(api, candidate)
     producers = {}
     for name in release.PROJECTS[repository.split("/")[1]]:
         source = f"yizha1/{name}"
@@ -611,9 +666,17 @@ def worker_authorization(api, repository, month, plan=None, allow_previous=False
         if upstream["status"] == "published":
             producers[name] = {"repository": source, "version": upstream["version"]}
     if plan is not None:
+        if recovery is not None and (
+            plan.get("status") != "verifying"
+            or digest({key: plan.get(key) for key in ("tag", "commit", "assets")}) != recovery["candidate_sha256"]
+        ):
+            raise ValueError("A recovered public candidate authorizes verification only")
         allowed_ids = {plan_id}
         if allow_previous and plan.get("status") in {"merging", "waiting", "ready"}:
             allowed_ids.update(item["from"] for item in state.get("revisions", []))
+        if allow_previous and recovery is not None and plan.get("status") == "verifying":
+            if digest({key: plan[key] for key in ("tag", "commit", "assets")}) == recovery["candidate_sha256"]:
+                allowed_ids.add(recovery["from_plan_id"])
         if (plan.get("mode") != "rehearse" or plan.get("cycle_id", "monthly") != "monthly"
                 or plan.get("controller_issue") != int(issue_number) or plan.get("controller_plan_id") not in allowed_ids
                 or any(plan.get(key) != snapshot[key] for key in ("baseline", "main", "branch", "tag"))
@@ -821,8 +884,11 @@ def main():
     parser.add_argument("--approve", action="store_true")
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--replan", action="store_true")
+    parser.add_argument("--recover-public-verification", action="store_true")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
+    if args.recover_public_verification and not (args.assessment_run and args.approve and args.replan and args.mode == "rehearse"):
+        parser.error("Public verification recovery requires a fresh assessment, rehearse mode, approval and replan")
     try:
         args.output.mkdir(parents=True, exist_ok=True)
         api = release.GitHub()
@@ -858,7 +924,7 @@ def main():
                     raise ValueError("New fork release plans require explicit approval")
                 else:
                     controller = Controller(api, os.environ["MONTHLY_PATCH_ACTOR"])
-                    issue, state = controller.approve(plan, args.assessment_run, args.replan)
+                    issue, state = controller.approve(plan, args.assessment_run, args.replan, args.recover_public_verification)
                     issue, state = controller.advance(issue, state, args.retry_failed)
                     result = {"issue": issue["number"], "state": state}
             elif args.mode == "dry-run":

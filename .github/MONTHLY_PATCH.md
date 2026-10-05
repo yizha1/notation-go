@@ -123,6 +123,15 @@ versions, and completed releases. In-flight workers and already public
 candidates cannot be replanned. Revisions and source run IDs remain in state.
 An ambiguous dispatch is not blindly repeated; reconcile its recorded attempt.
 
+If a verifier bug blocks an already public candidate, normal replanning still
+refuses to replace it. After reviewed verifier fixes, a fresh assessment and
+explicit `approve=true,replan=true,recover_public_verification=true` can update
+its worker-code SHA only. The controller verifies and retains the original
+signed tag, commit, asset hashes, source scope and reserved version. A hashed
+recovery receipt authorizes verification only. The worker cannot rebuild,
+republish or merge dependencies on that path, and every public verification
+platform must still pass before consumers advance.
+
 The latest canonical stable SemVer release selects the `release-MAJOR.MINOR`
 line, prefixed with `monthly-patch-test-` in a fork rehearsal. Dates and the
 GitHub latest flag do not select the branch. Dependency-only commits are

@@ -370,6 +370,130 @@ class ReleaseControllerTests(unittest.TestCase):
         with patch.object(self.api, "optional", return_value={"object": {"sha": MAIN}}), self.assertRaisesRegex(ValueError, "public candidate"):
             self.controller.approve(plan, 23, replan=True)
 
+    def verification_reassessment(self):
+        issue, state = self.approved()
+        self.api.worker(CORE, issue, state, "verifying", "failure")
+        state["nodes"][CORE]["status"] = "failed"
+        self.controller.save(issue, state)
+        evidence = inventory((GO,))
+        source = evidence["repositories"][CORE]
+        source.update(release_head=MAIN, source_commit=MAIN, automation_sha="e" * 40)
+        self.api.changed[(CORE, source["branch"])] = MAIN
+        self.api.changed[(CORE, "main")] = "e" * 40
+        plan = coordinator.validate_assessment(evidence, assessment(evidence, ("skip", "release", "release")))
+        return issue, state, plan
+
+    def recover_verification(self, plan):
+        original = self.api.optional
+        def tag(path):
+            return {"object": {"sha": MAIN}} if path.startswith(f"repos/{CORE}/git/ref/tags/") else original(path)
+        with patch.object(self.api, "optional", side_effect=tag), \
+             patch.object(release, "assert_tag") as signature, \
+             patch.object(release, "check_public_assets") as assets:
+            result = self.controller.approve(plan, 23, replan=True, recover_public_verification=True)
+            signature.assert_called_once()
+            assets.assert_called_once()
+        return result
+
+    def test_explicit_public_recovery_changes_only_worker_code_and_binds_asset_identity(self):
+        issue, previous, plan = self.verification_reassessment()
+        old_snapshot = copy.deepcopy(previous["plan"]["snapshots"][CORE])
+        issue, state = self.recover_verification(plan)
+        snapshot = state["plan"]["snapshots"][CORE]
+        self.assertEqual({key: snapshot[key] for key in old_snapshot if key != "automation_sha"},
+                         {key: old_snapshot[key] for key in old_snapshot if key != "automation_sha"})
+        self.assertEqual(snapshot["automation_sha"], "e" * 40)
+        self.assertEqual(snapshot["verification_recovery"]["from_plan_id"], previous["plan"]["plan_id"])
+        self.assertEqual(state["plan"]["decisions"][CORE]["decision"], "release")
+        self.assertEqual(issue["number"], 1)
+        self.assertEqual(state["nodes"][CORE]["status"], "pending")
+        self.assertFalse(self.api.dispatched)
+        coordinator.validate_state(state)
+
+    def test_verification_recovery_cannot_start_a_new_cycle_or_use_the_old_assessment(self):
+        evidence = inventory((CORE,))
+        plan = coordinator.validate_assessment(evidence, assessment(evidence, ("release", "release", "release")))
+        with self.assertRaisesRegex(ValueError, "existing approved cycle"):
+            self.controller.approve(plan, 22, replan=True, recover_public_verification=True)
+        self.controller.approve(plan, 22)
+        with self.assertRaisesRegex(ValueError, "fresh changed assessment"):
+            self.controller.approve(plan, 23, replan=True, recover_public_verification=True)
+        with self.assertRaisesRegex(ValueError, "explicit replan"):
+            self.controller.approve(plan, 23, recover_public_verification=True)
+
+    def test_public_recovery_cannot_replace_tagged_but_unpublished_candidate(self):
+        issue, state, plan = self.verification_reassessment()
+        cycle = release.Cycle(self.api, CORE, MONTH, "rehearse")
+        cycle.state["status"] = "tagged"
+        cycle.save(cycle.state)
+        with self.assertRaisesRegex(ValueError, "exact public verification candidate"):
+            self.recover_verification(plan)
+
+    def test_public_recovery_cannot_change_candidate_branch_or_baseline(self):
+        for field, value in (("release_head", BRANCH), ("baseline", "v1.4.0"), ("workflow_id", 90)):
+            with self.subTest(field=field):
+                self.api = ControllerAPI()
+                self.controller = coordinator.Controller(self.api, "test-actor")
+                _, _, plan = self.verification_reassessment()
+                plan["snapshots"][CORE][field] = value
+                plan["plan_id"] = coordinator.digest({key: value for key, value in plan.items() if key != "plan_id"})
+                with self.assertRaisesRegex(ValueError, "cannot change the public candidate"):
+                    self.recover_verification(plan)
+
+    def test_public_recovery_refuses_bad_signature_assets_and_stale_automation(self):
+        for failure in ("signature", "assets", "stale"):
+            with self.subTest(failure=failure):
+                self.api = ControllerAPI()
+                self.controller = coordinator.Controller(self.api, "test-actor")
+                _, _, plan = self.verification_reassessment()
+                if failure == "stale":
+                    self.api.changed[(CORE, "main")] = "f" * 40
+                target = "assert_tag" if failure == "signature" else "check_public_assets"
+                original = self.api.optional
+                with patch.object(self.api, "optional", side_effect=lambda path: {"object": {"sha": MAIN}} if path.startswith(f"repos/{CORE}/git/ref/tags/") else original(path)), \
+                     patch.object(release, "assert_tag"), patch.object(release, "check_public_assets"), \
+                     patch.object(release, target, side_effect=ValueError("Gate rejected")):
+                    writes = len(self.api.writes)
+                    with self.assertRaisesRegex(ValueError, "stale|Gate rejected"):
+                        self.controller.approve(plan, 23, replan=True, recover_public_verification=True)
+                    self.assertEqual(len(self.api.writes), writes)
+
+    def test_public_recovery_rebinds_verification_without_git_or_new_publication(self):
+        _, _, plan = self.verification_reassessment()
+        issue, state = self.recover_verification(plan)
+        candidate = copy.deepcopy(release.Cycle(self.api, CORE, MONTH, "rehearse").state)
+        issue, state = self.controller.advance(issue, state)
+        environment = {
+            "MONTHLY_PATCH_COORDINATOR_REQUIRED": "true", "GITHUB_REF": "refs/heads/main",
+            "GITHUB_SHA": "e" * 40, "MONTHLY_PATCH_CONTROLLER_ISSUE": str(issue["number"]),
+            "MONTHLY_PATCH_CONTROLLER_PLAN": state["plan"]["plan_id"], "MONTHLY_PATCH_CONTROLLER_ATTEMPT": "1",
+            "MONTHLY_PATCH_REHEARSAL_ENABLED": "true", "MONTHLY_PATCH_TOKEN_READY": "true",
+            "MONTHLY_PATCH_SIGNING_KEY": "test-key", "MONTHLY_PATCH_SIGNER_EMAIL": "test@example.com",
+            "MONTHLY_PATCH_SIGNER_LOGIN": "test-actor",
+        }
+        with patch.dict(os.environ, environment), patch.object(release, "assert_tag"), \
+             patch.object(release, "check_public_assets"), patch.object(release, "git") as git:
+            result = release.prepare(self.api, CORE, "rehearse", MONTH, pathlib.Path("."), pathlib.Path("."), True)
+            self.assertEqual(result["action"], "verify")
+            self.assertEqual(result["controller_plan_id"], state["plan"]["plan_id"])
+            for field in ("tag", "commit", "assets"):
+                self.assertEqual(result[field], candidate[field])
+            git.assert_not_called()
+            for field, value in (("status", "ready"), ("commit", BRANCH), ("assets", [{"name": "unexpected"}])):
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    coordinator.worker_authorization(self.api, CORE, MONTH, {**result, field: value})
+            coordinator.worker_authorization(self.api, CORE, MONTH, result)
+            with self.assertRaisesRegex(ValueError, "cannot build or republish"):
+                release.publish(self.api, result, pathlib.Path("."))
+            with self.assertRaises(ValueError):
+                coordinator.worker_authorization(self.api, CORE, MONTH, candidate)
+            cycle = release.Cycle(self.api, CORE, MONTH, "rehearse")
+            cycle.state["status"] = "merging"
+            cycle.save(cycle.state)
+            with self.assertRaisesRegex(ValueError, "cannot change or rebuild"):
+                coordinator.worker_authorization(self.api, CORE, MONTH)
+        self.assertFalse(any(method == "PUT" for _, method, _ in self.api.writes))
+
     def test_unacknowledged_dispatch_is_not_blindly_reissued(self):
         issue, state = self.approved()
         original = self.api.request

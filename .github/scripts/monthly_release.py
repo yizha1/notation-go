@@ -600,6 +600,9 @@ def prepare(api, repository, mode, month, directory, output, start=False, reconc
     cycle = Cycle(api, repository, month, effective_mode, cycle_id)
     if authorization and cycle.state:
         coordinator_authorization(api, repository, mode, month, cycle.state, allow_previous=True)
+        if cycle.state["status"] == "verifying" and cycle.state.get("controller_plan_id") != authorization["plan_id"]:
+            cycle.state["controller_plan_id"] = authorization["plan_id"]
+            cycle.save(cycle.state)
     discovered = None
     if not active and reconcile and mode != "dry-run":
         pending = pending_notification(api, repository, effective_mode)
@@ -862,7 +865,9 @@ def tag_candidate(api, plan, directory):
 def publish(api, plan, directory):
     validate_plan(plan)
     policy(plan["repository"], plan["mode"], os.environ, api.request(f"repos/{plan['repository']}"))
-    coordinator_authorization(api, plan["repository"], plan["mode"], plan["month"], plan)
+    authorization = coordinator_authorization(api, plan["repository"], plan["mode"], plan["month"], plan)
+    if authorization and authorization["snapshot"].get("verification_recovery") is not None:
+        raise ValueError("Verification-only recovery cannot build or republish release assets")
     assert_tag(api, plan)
     assets = []
     for path in sorted(pathlib.Path(directory).iterdir()):

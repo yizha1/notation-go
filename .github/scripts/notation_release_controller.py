@@ -627,7 +627,9 @@ def run_title(month, plan_id, issue, attempt):
     return f"Monthly patch {month} {plan_id} #{issue} attempt {attempt}"
 
 
-def worker_authorization(api, repository, month, plan=None, allow_previous=False):
+def worker_authorization(api, repository, month, plan=None, allow_previous=False, notification=False):
+    if notification and plan is not None:
+        raise ValueError("Controller progress notifications cannot authorize writing stages")
     if os.environ.get("MONTHLY_PATCH_COORDINATOR_REQUIRED") != "true":
         return None
     issue_number = os.environ.get("MONTHLY_PATCH_CONTROLLER_ISSUE", "")
@@ -649,7 +651,8 @@ def worker_authorization(api, repository, month, plan=None, allow_previous=False
     recovery = snapshot.get("verification_recovery")
     if recovery is not None:
         candidate = release.Cycle(api, repository, month, "rehearse").state
-        if (candidate is None or candidate["status"] != "verifying"
+        if (candidate is None or (
+                candidate["status"] != "verifying" and not (notification and candidate["status"] == "published"))
                 or candidate.get("controller_issue") != int(issue_number)
                 or candidate.get("controller_plan_id") not in {plan_id, recovery["from_plan_id"]}
                 or candidate["tag"] != snapshot["tag"]

@@ -74,7 +74,7 @@ class ControllerAPI(FakeGitHub):
         suffix = "/".join(path.split("/")[3:])
         if suffix == "issues" and method == "POST" or suffix.startswith("issues/") and method == "PATCH":
             return super().request(path, method, payload)
-        if method == "POST" and suffix.endswith("/dispatches"):
+        if method == "POST" and (suffix == "dispatches" or suffix.endswith("/dispatches")):
             self.dispatched.append((repository, payload))
             self.writes.append((path, method, payload))
             return None
@@ -485,9 +485,26 @@ class ReleaseControllerTests(unittest.TestCase):
             coordinator.worker_authorization(self.api, CORE, MONTH, result)
             with self.assertRaisesRegex(ValueError, "cannot build or republish"):
                 release.publish(self.api, result, pathlib.Path("."))
+            cycle = release.Cycle(self.api, CORE, MONTH, "rehearse")
+            cycle.state["status"] = "published"
+            cycle.save(cycle.state)
+            coordinator.worker_authorization(self.api, CORE, MONTH, notification=True)
+            with self.assertRaises(ValueError):
+                coordinator.worker_authorization(self.api, CORE, MONTH)
+            with self.assertRaisesRegex(ValueError, "cannot authorize writing"):
+                coordinator.worker_authorization(self.api, CORE, MONTH, result, notification=True)
+            with tempfile.TemporaryDirectory() as output, patch.object(release, "GitHub", return_value=self.api), \
+                 patch("sys.argv", ["monthly_release.py", "notify-controller", "--repository", CORE,
+                                   "--mode", "rehearse", "--month", MONTH, "--output", output]):
+                self.assertEqual(release.main(), 0)
+            hints = [payload for path, method, payload in self.api.writes
+                     if path == f"repos/{CLI}/dispatches" and method == "POST"]
+            self.assertEqual(len(hints), 1)
+            self.assertEqual(hints[0]["event_type"], "notation-release-progress")
+            cycle.state["status"] = "verifying"
+            cycle.save(cycle.state)
             with self.assertRaises(ValueError):
                 coordinator.worker_authorization(self.api, CORE, MONTH, candidate)
-            cycle = release.Cycle(self.api, CORE, MONTH, "rehearse")
             cycle.state["status"] = "merging"
             cycle.save(cycle.state)
             with self.assertRaisesRegex(ValueError, "cannot change or rebuild"):

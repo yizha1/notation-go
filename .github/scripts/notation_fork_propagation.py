@@ -64,7 +64,7 @@ def prepare(api, plan, output):
     base = source_head(api, plan, authorization)
     if not release.producer_lag(api, plan["repository"], base, "rehearse", producers):
         return {"action": "none", "reason": "Planned producers are already consumed"}
-    floors = {name: api.manifest(item["repository"], item["version"], ".")["Go"] for name, item in producers.items()}
+    producer_modules = {name: api.manifest(item["repository"], item["version"], ".") for name, item in producers.items()}
     with tempfile.TemporaryDirectory(prefix="notation-fork-propagation-source-") as temporary:
         source = pathlib.Path(temporary)
         release.git(["init", "--quiet"], source)
@@ -86,7 +86,7 @@ def prepare(api, plan, output):
             release.run(["go", "mod", "tidy"], source / directory)
         after = manifests(source, plan["repository"])
         current = release.run(["go", "env", "GOVERSION"]).strip()
-        if not controller.producer_manifests(before, after, producers, floors, current):
+        if not controller.producer_manifests(before, after, producers, producer_modules, current):
             raise ValueError("Propagation would change unrelated direct dependencies; finish their reviewed updates first")
         if release.producer_lag_from_manifests(plan["repository"], after, "rehearse", producers):
             raise ValueError("Propagation did not consume every planned producer")
@@ -141,9 +141,9 @@ def publish(api, prepared, output):
         for path, content in files.items():
             (source / path).write_text(content, encoding="utf-8")
         after = manifests(source, plan["repository"])
-        floors = {name: api.manifest(item["repository"], item["version"], ".")["Go"]
-                  for name, item in authorization["producers"].items()}
-        if not controller.producer_manifests(before, after, authorization["producers"], floors,
+        producer_modules = {name: api.manifest(item["repository"], item["version"], ".")
+                            for name, item in authorization["producers"].items()}
+        if not controller.producer_manifests(before, after, authorization["producers"], producer_modules,
                                              release.run(["go", "env", "GOVERSION"]).strip()):
             raise ValueError("Propagation artifact escapes its planned producer scope")
         if release.producer_lag_from_manifests(plan["repository"], after, "rehearse", authorization["producers"]):

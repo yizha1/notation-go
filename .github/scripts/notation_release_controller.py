@@ -622,17 +622,38 @@ def worker_authorization(api, repository, month, plan=None, allow_previous=False
     return {"issue": int(issue_number), "plan_id": plan_id, "snapshot": snapshot, "producers": producers}
 
 
-def producer_manifests(before_modules, after_modules, producers, producer_go, current):
+def module_version(value):
+    match = re.fullmatch(
+        r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+        r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
+        value if isinstance(value, str) else "",
+    )
+    if match is None:
+        raise ValueError("Invalid producer module version")
+    major, minor, patch, prerelease = match.groups()
+    identifiers = []
+    for identifier in prerelease.split(".") if prerelease is not None else ():
+        if identifier.isdecimal():
+            if len(identifier) > 1 and identifier.startswith("0"):
+                raise ValueError("Invalid numeric producer prerelease identifier")
+            identifiers.append((0, int(identifier)))
+        else:
+            identifiers.append((1, identifier))
+    return int(major), int(minor), int(patch), prerelease is None, tuple(identifiers)
+
+
+def producer_manifests(before_modules, after_modules, producers, producer_modules, current):
     changed = False
     allowed = {f"github.com/notaryproject/{name}" for name in producers}
     def go_version(value):
         if not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", value):
             raise ValueError("Invalid producer Go requirement")
         return tuple(map(int, value.split("."))) + (0,) * (3 - len(value.split(".")))
-    producer_go = {name: go_version(value) for name, value in producer_go.items()}
+    producer_go = {name: go_version(manifest["Go"]) for name, manifest in producer_modules.items()}
     for directory, before in before_modules.items():
         after = after_modules[directory]
         changed_go = []
+        changed_producers = []
         for name, item in producers.items():
             module = f"github.com/notaryproject/{name}"
             def dependency(manifest):
@@ -643,6 +664,7 @@ def producer_manifests(before_modules, after_modules, producers, producer_go, cu
                     return False
                 changed = True
                 changed_go.append(producer_go[name])
+                changed_producers.append(name)
         floor = max([go_version(before["Go"]), *changed_go])
         if before["Go"] != after["Go"] and go_version(after["Go"]) != floor:
             return False
@@ -652,15 +674,35 @@ def producer_manifests(before_modules, after_modules, producers, producer_go, cu
                 return False
             if not floor <= go_version(chain.removeprefix("go")) <= go_version(current.removeprefix("go")):
                 return False
-        def unrelated(manifest):
+        required = {}
+        for name in changed_producers:
+            for entry in producer_modules[name].get("Require") or []:
+                path, version = entry["Path"], entry["Version"]
+                if path not in required or module_version(version) > module_version(required[path]):
+                    required[path] = version
+        original = {entry["Path"]: entry for entry in before.get("Require") or []}
+        updated = {entry["Path"]: entry for entry in after.get("Require") or []}
+        for path, previous in original.items():
+            if path not in allowed and not previous.get("Indirect") and path in required:
+                if (module_version(required[path]) > module_version(previous["Version"])
+                        and updated.get(path, {}).get("Version") != required[path]):
+                    return False
+        def unrelated(manifest, normalize=False):
             result = copy.deepcopy(manifest)
             # MVS can change indirect requirements when a producer is updated.
             result["Require"] = [item for item in result.get("Require") or [] if item["Path"] not in allowed and not item.get("Indirect")]
+            for entry in result["Require"]:
+                path = entry["Path"]
+                previous = original.get(path)
+                if (normalize and previous is not None and path in required
+                        and entry["Version"] == required[path]
+                        and module_version(required[path]) > module_version(previous["Version"])):
+                    entry["Version"] = previous["Version"]
             result["Replace"] = [item for item in result.get("Replace") or [] if item["Old"]["Path"] not in allowed]
             result.pop("Go", None)
             result.pop("Toolchain", None)
             return result
-        if unrelated(before) != unrelated(after):
+        if unrelated(before) != unrelated(after, normalize=True):
             return False
     return changed
 
@@ -676,9 +718,9 @@ def producer_pull(api, repository, pull, producers):
         return False
     before = {directory: api.manifest(repository, pull["base"]["sha"], directory) for directory in release.modules(repository)}
     after = {directory: api.manifest(repository, pull["head"]["sha"], directory) for directory in release.modules(repository)}
-    floors = {name: api.manifest(item["repository"], item["version"], ".")["Go"] for name, item in producers.items()}
+    producer_modules = {name: api.manifest(item["repository"], item["version"], ".") for name, item in producers.items()}
     current = release.run(["go", "env", "GOVERSION"]).strip()
-    return producer_manifests(before, after, producers, floors, current)
+    return producer_manifests(before, after, producers, producer_modules, current)
 
 
 def propagation_branch(month, plan_id):

@@ -110,6 +110,12 @@ class PropagationAuthorizationTests(unittest.TestCase):
 
 class PropagationPipelineTests(unittest.TestCase):
     def test_real_go_update_creates_one_signed_module_only_pr_and_resumes(self):
+        self.check_real_go_update()
+
+    def test_real_go_update_includes_a_producer_required_direct_dependency_bump(self):
+        self.check_real_go_update(direct_dependency=True)
+
+    def check_real_go_update(self, direct_dependency=False):
         with tempfile.TemporaryDirectory(prefix="notation-fork-integration-") as temporary:
             root = pathlib.Path(temporary)
             proxy, tree, remote = root / "proxy", root / "tree", root / "remote.git"
@@ -120,11 +126,25 @@ class PropagationPipelineTests(unittest.TestCase):
             versions.mkdir(parents=True)
             for version in (old, TARGET):
                 mod = "module github.com/notaryproject/notation-core-go\n\ngo 1.26.0\n"
+                if direct_dependency:
+                    mod += "\nrequire example.com/shared " + ("v1.0.0" if version == old else "v1.2.0") + "\n"
                 (versions / (version + ".mod")).write_text(mod)
                 (versions / (version + ".info")).write_text(json.dumps({"Version": version, "Time": "2026-10-01T00:00:00Z"}))
                 with zipfile.ZipFile(versions / (version + ".zip"), "w") as archive:
                     archive.writestr(module + "@" + version + "/go.mod", mod)
-                    archive.writestr(module + "@" + version + "/core.go", "package core\n\nfunc Value() int { return 1 }\n")
+                    body = ('package core\n\nimport "example.com/shared"\n\nfunc Value() int { return shared.Value() }\n'
+                            if direct_dependency else "package core\n\nfunc Value() int { return 1 }\n")
+                    archive.writestr(module + "@" + version + "/core.go", body)
+            if direct_dependency:
+                shared = proxy / "example.com/shared" / "@v"
+                shared.mkdir(parents=True)
+                for version in ("v1.0.0", "v1.2.0"):
+                    mod = "module example.com/shared\n\ngo 1.26.0\n"
+                    (shared / (version + ".mod")).write_text(mod)
+                    (shared / (version + ".info")).write_text(json.dumps({"Version": version, "Time": "2026-10-01T00:00:00Z"}))
+                    with zipfile.ZipFile(shared / (version + ".zip"), "w") as archive:
+                        archive.writestr("example.com/shared@" + version + "/go.mod", mod)
+                        archive.writestr("example.com/shared@" + version + "/shared.go", "package shared\n\nfunc Value() int { return 1 }\n")
             (tree / "go.mod").write_text(
                 "module github.com/notaryproject/notation-go\n\ngo 1.26.0\n\n"
                 "require github.com/notaryproject/notation-core-go v1.3.0\n\n"
@@ -133,6 +153,12 @@ class PropagationPipelineTests(unittest.TestCase):
             (tree / "main.go").write_text(
                 'package notation\n\nimport core "github.com/notaryproject/notation-core-go"\n\nfunc Value() int { return core.Value() }\n'
             )
+            if direct_dependency:
+                (tree / "go.mod").write_text((tree / "go.mod").read_text() + "\nrequire example.com/shared v1.0.0\n")
+                (tree / "main.go").write_text(
+                    'package notation\n\nimport (core "github.com/notaryproject/notation-core-go"; "example.com/shared")\n\n'
+                    "func Value() int { return core.Value() + shared.Value() }\n"
+                )
             environment = {"GOWORK": "off", "GOTOOLCHAIN": "local", "GOPATH": str(root / "go"),
                            "GOMODCACHE": str(root / "modules"), "GOPROXY": proxy.as_uri(), "GOSUMDB": "off",
                            "MONTHLY_PATCH_ACTOR": "test-actor", "MONTHLY_PATCH_SIGNER_LOGIN": "test-actor",
@@ -180,7 +206,8 @@ class PropagationPipelineTests(unittest.TestCase):
 
                     def manifest(self, repository, ref, directory):
                         if repository == CORE:
-                            return {"Go": "1.26.0"}
+                            return {"Go": "1.26.0", "Require": [{"Path": "example.com/shared", "Version": "v1.2.0"}]
+                                    if direct_dependency else []}
                         if ref == base:
                             return before
                         modfile = root / "remote.mod"
@@ -203,6 +230,9 @@ class PropagationPipelineTests(unittest.TestCase):
                     result = propagation.publish(api, prepared, root / "published")
                     self.assertEqual(result["pull_request"], 99)
                     head = api.open_pulls[0]["head"]["sha"]
+                    if direct_dependency:
+                        requirements = {entry["Path"]: entry["Version"] for entry in api.manifest(GO, head, ".")["Require"]}
+                        self.assertEqual(requirements["example.com/shared"], "v1.2.0")
                     signers = root / "allowed-signers"
                     signers.write_text("test@example.com " + public)
                     release.run(["git", "-c", "gpg.ssh.allowedSignersFile=" + str(signers),
@@ -211,6 +241,67 @@ class PropagationPipelineTests(unittest.TestCase):
                     self.assertEqual(set(names), {"go.mod", "go.sum"})
                     self.assertEqual(propagation.publish(api, prepared, root / "retry")["pull_request"], 99)
                     self.assertEqual(len(api.writes), 1)
+
+    def test_direct_dependency_changes_are_limited_to_the_producer_required_floor(self):
+        before = {"Go": "1.26.0",
+                  "Require": [{"Path": "github.com/notaryproject/notation-core-go", "Version": "v1.3.0"},
+                              {"Path": "example.com/shared", "Version": "v1.0.0"}],
+                  "Replace": [{"Old": {"Path": "github.com/notaryproject/notation-core-go"},
+                               "New": {"Path": "github.com/yizha1/notation-core-go", "Version": "v1.3.1-trial.4"}}]}
+        after = copy.deepcopy(before)
+        after["Replace"][0]["New"]["Version"] = TARGET
+        metadata = {"notation-core-go": {"Go": "1.26.0",
+                                         "Require": [{"Path": "example.com/shared", "Version": "v1.2.0"}]}}
+        for version, expected in (("v1.0.0", False), ("v1.1.0", False), ("v1.2.0", True), ("v1.3.0", False)):
+            after["Require"][1]["Version"] = version
+            with self.subTest(version=version):
+                self.assertEqual(controller.producer_manifests({".": before}, {".": after}, authorization()["producers"],
+                                                              metadata, "go1.27.1"), expected)
+        before["Require"][1]["Version"] = "v1.3.0"
+        after["Require"][1]["Version"] = "v1.2.0"
+        self.assertFalse(controller.producer_manifests({".": before}, {".": after}, authorization()["producers"],
+                                                      metadata, "go1.27.1"))
+        after["Require"][1]["Version"] = "v1.3.0"
+        self.assertTrue(controller.producer_manifests({".": before}, {".": after}, authorization()["producers"],
+                                                     metadata, "go1.27.1"))
+        before["Require"][1]["Version"] = "v1.0.0"
+        after["Require"][1]["Version"] = "v1.2.0"
+        after["Require"].append({"Path": "example.com/unrelated", "Version": "v1.0.0"})
+        self.assertFalse(controller.producer_manifests({".": before}, {".": after}, authorization()["producers"],
+                                                      metadata, "go1.27.1"))
+        after["Require"].pop()
+        after["Replace"][0]["New"]["Version"] = before["Replace"][0]["New"]["Version"]
+        self.assertFalse(controller.producer_manifests({".": before}, {".": after}, authorization()["producers"],
+                                                      metadata, "go1.27.1"))
+
+    def test_module_version_ordering_matches_go_semver_precedence(self):
+        ordered = ["v1.0.0-alpha", "v1.0.0-alpha.1", "v1.0.0-alpha.beta", "v1.0.0-beta",
+                   "v1.0.0-beta.2", "v1.0.0-beta.11", "v1.0.0-rc.1", "v1.0.0", "v1.2.0", "v1.10.0"]
+        self.assertEqual(sorted(reversed(ordered), key=controller.module_version), ordered)
+        self.assertEqual(controller.module_version("v2.0.0+incompatible"), controller.module_version("v2.0.0"))
+        for invalid in ("v01.0.0", "v1.0.0-01", "v1.0", "v1.0.0+", None):
+            with self.subTest(version=invalid), self.assertRaises(ValueError):
+                controller.module_version(invalid)
+
+    def test_shared_dependency_uses_highest_changed_producer_requirement(self):
+        producers = {name: {"repository": f"yizha1/{name}", "version": TARGET}
+                     for name in ("notation-core-go", "notation-go")}
+        before = {"Go": "1.26.0",
+                  "Require": [{"Path": f"github.com/notaryproject/{name}", "Version": "v1.3.0"} for name in producers]
+                             + [{"Path": "example.com/shared", "Version": "v1.0.0"}],
+                  "Replace": [{"Old": {"Path": f"github.com/notaryproject/{name}"},
+                               "New": {"Path": f"github.com/yizha1/{name}", "Version": "v1.3.1-trial.4"}}
+                              for name in producers]}
+        after = copy.deepcopy(before)
+        for replacement in after["Replace"]:
+            replacement["New"]["Version"] = TARGET
+        metadata = {name: {"Go": "1.26.0", "Require": [{"Path": "example.com/shared", "Version": version}]}
+                    for name, version in zip(producers, ("v1.10.0", "v1.2.0"))}
+        for version, expected in (("v1.2.0", False), ("v1.10.0", True)):
+            after["Require"][-1]["Version"] = version
+            with self.subTest(version=version):
+                self.assertEqual(controller.producer_manifests({".": before}, {".": after}, producers, metadata, "go1.27.1"),
+                                 expected)
 
     def test_source_head_must_contain_only_recorded_approved_merges(self):
         api = ControllerAPI()

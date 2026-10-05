@@ -84,8 +84,11 @@ next included repository. Consumer workers pin the plan's verified producer
 versions rather than adopting arbitrary newer releases midway through the cycle.
 New Dependabot propagation PRs may enter the fixed scope only when they update
 the planned Notation producers without unrelated direct dependencies, replacements
-or workflow changes. Indirect requirements and a producer-required Go floor may
-change; module/tidy, minimum-Go and qualification gates still apply.
+or workflow changes. Indirect requirements, a producer-required Go floor, and
+producer-required increases to existing shared direct dependencies may change.
+Each direct increase must match the highest requirement in the changed
+producers' published manifests exactly; arbitrary upgrades and downgrades are
+rejected. Module/tidy, minimum-Go and qualification gates still apply.
 An unconsumed planned version waits for its scoped update PR and normal checks.
 Dependabot skips Go dependencies that use `replace` directives. The fork-only
 worker therefore prepares exact planned replacement updates in a read-only job,

@@ -282,6 +282,61 @@ class MonthlyReleaseTests(unittest.TestCase):
         self.assertEqual(result["pulls"], [{"number": 1, "ready": True, "reason": ""}])
         self.assertFalse(api.writes)
 
+    def test_blocked_earlier_pr_does_not_prevent_a_checked_cve_fix_merge(self):
+        for failure in ("failed", "pending", "missing"):
+            with self.subTest(failure=failure):
+                api = FakeGitHub()
+                head = "c" * 40
+                api.open_pulls = [pull(3), pull(6, sha=head)]
+                blocked = checks()
+                if failure == "failed":
+                    blocked["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+                elif failure == "pending":
+                    blocked["statusCheckRollup"][0]["status"] = "IN_PROGRESS"
+                else:
+                    blocked["statusCheckRollup"] = []
+                with patch.object(api, "checks", side_effect=lambda _, number: blocked if number == 3 else checks(head)), \
+                     patch.object(release, "signing_environment", return_value=dict(os.environ)), \
+                     patch.object(release, "git") as candidate_git:
+                    result = release.prepare(api, REPO, "execute", "2026-10", ".", ".", True)
+                self.assertEqual(result["action"], "waiting")
+                self.assertIn("Dependabot #3:", result["reason"])
+                self.assertEqual(result["merged"], [{"number": 6, "commit": COMMIT}])
+                merges = [(path, payload) for path, method, payload in api.writes if method == "PUT"]
+                self.assertEqual(merges, [(f"repos/{REPO}/pulls/6/merge", {"sha": head, "merge_method": "squash"})])
+                candidate_git.assert_not_called()
+                api.open_pulls = [pull(3)]
+                api.check_result = blocked
+                with patch.object(release, "signing_environment", return_value=dict(os.environ)):
+                    resumed = release.prepare(api, REPO, "execute", "2026-10", ".", ".", False, True)
+                self.assertEqual(resumed["action"], "waiting")
+                self.assertEqual(resumed["merged"], result["merged"])
+                self.assertEqual(sum(method == "PUT" for _, method, _ in api.writes), 1)
+                self.assertEqual(len(api.issues), 1)
+
+    def test_all_blocked_prs_are_reported_without_merging_or_backporting(self):
+        api = FakeGitHub()
+        api.open_pulls = [pull(3), pull(6)]
+        api.check_result["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        with patch.object(release, "signing_environment", return_value=dict(os.environ)), \
+             patch.object(release, "git") as candidate_git:
+            result = release.prepare(api, REPO, "execute", "2026-10", ".", ".", True)
+        self.assertEqual(result["action"], "waiting")
+        self.assertEqual(result["reason"], "Dependabot #3: A check failed; Dependabot #6: A check failed")
+        self.assertFalse(result["merged"])
+        self.assertFalse(any(method == "PUT" for _, method, _ in api.writes))
+        candidate_git.assert_not_called()
+
+    def test_changed_check_head_never_qualifies_a_later_merge(self):
+        api = FakeGitHub()
+        api.open_pulls = [pull(3), pull(6, sha="c" * 40)]
+        api.check_result["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        with patch.object(release, "signing_environment", return_value=dict(os.environ)):
+            result = release.prepare(api, REPO, "execute", "2026-10", ".", ".", True)
+        self.assertEqual(result["action"], "waiting")
+        self.assertIn("Dependabot #6: Draft or changed pull-request head", result["reason"])
+        self.assertFalse(any(method == "PUT" for _, method, _ in api.writes))
+
     def test_automatic_resumption_does_not_start_an_unscheduled_cycle(self):
         api = FakeGitHub()
         result = release.prepare(api, REPO, "execute", "2026-10", ".", ".", False)
@@ -588,10 +643,19 @@ class MonthlyReleaseTests(unittest.TestCase):
             secret = key.read_text()
             location = path / "signing"
             location.mkdir()
-            with patch.dict(os.environ, {"MONTHLY_PATCH_SIGNING_KEY": secret}):
+            with patch.dict(os.environ, {"MONTHLY_PATCH_SIGNING_KEY": secret, "MONTHLY_PATCH_SIGNER_NAME": ""}):
                 environment = release.signing_environment(location, api)
             self.assertEqual((location / "signing-key").stat().st_mode & 0o777, 0o600)
             self.assertIn("ssh", environment.values())
+            self.assertEqual(environment["GIT_CONFIG_VALUE_0"], "Monthly dependency release")
+            identity = subprocess.run(["git", "var", "GIT_COMMITTER_IDENT"], cwd=path,
+                                      env=environment, check=True, capture_output=True, text=True).stdout
+            self.assertTrue(identity.startswith("Monthly dependency release <test@example.com>"))
+            named = path / "named"
+            named.mkdir()
+            with patch.dict(os.environ, {"MONTHLY_PATCH_SIGNING_KEY": secret,
+                                        "MONTHLY_PATCH_SIGNER_NAME": "Rehearsal signer"}):
+                self.assertEqual(release.signing_environment(named, api)["GIT_CONFIG_VALUE_0"], "Rehearsal signer")
             mismatch = path / "unregistered"
             mismatch.mkdir()
             api.public_key = "ssh-ed25519 different"

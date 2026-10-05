@@ -58,6 +58,26 @@ def metadata(tag="v1.3.1", commit="a" * 40, flags=""):
 
 
 class MonthlyReleaseCheckTests(unittest.TestCase):
+    def test_source_archive_matches_exactly_despite_windows_git_crlf_conversion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary)
+            subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+            (source / "go.mod").write_bytes(b"module example.com/library\n\ngo 1.26\n")
+            subprocess.run(["git", "add", "go.mod"], cwd=source, check=True)
+            subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "user.name=Test",
+                            "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "Fixture"],
+                           cwd=source, check=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+            command = ["git", "archive", "--format=tar", "--prefix=notation-core-go-1.3.1/", commit]
+            expected = subprocess.check_output(["git", "-c", "core.autocrlf=false", *command[1:]], cwd=source)
+            subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=source, check=True)
+            self.assertNotEqual(subprocess.check_output(command, cwd=source), expected)
+            self.assertEqual(checks.library_source_archive(source, "notation-core-go", "v1.3.1", commit), expected)
+            self.assertEqual(subprocess.check_output(["git", "config", "core.autocrlf"],
+                                                    cwd=source, text=True).strip(), "true")
+            with self.assertRaisesRegex(ValueError, "Source archive failed"):
+                checks.library_source_archive(source, "notation-core-go", "v1.3.1", "missing-ref")
+
     def test_asset_names_preserve_six_standard_platform_archives_and_checksum(self):
         names = checks.asset_names("notation", "v1.3.1")
         self.assertEqual(len(names), 7)

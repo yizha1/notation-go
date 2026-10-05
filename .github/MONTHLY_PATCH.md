@@ -79,6 +79,16 @@ CI, a clean mergeable head, and satisfied required reviews. It uses normal
 GitHub squash merges pinned to the observed head SHA. It never invokes an
 administrative merge or resolves conflicts automatically.
 
+An unready scoped PR does not block another scoped PR whose checks qualify it.
+This lets a checked module CVE fix merge before Actions-only PRs that still
+scan the vulnerable base. The worker records every remaining blocker and waits
+without preparing a release candidate until all scoped PRs qualify. Rebasing
+an assessed PR still requires a fresh assessment and explicit replan.
+
+Library packaging and public verification disable Git's automatic CRLF
+conversion for the archive command, without changing repository configuration.
+Windows compares the same canonical archive bytes as Linux and macOS.
+
 After successful public package verification, the controller can dispatch the
 next included repository. Consumer workers pin the plan's verified producer
 versions rather than adopting arbitrary newer releases midway through the cycle.
@@ -112,6 +122,15 @@ tagging, reassessment may refresh refs while retaining the DAG, reserved patch
 versions, and completed releases. In-flight workers and already public
 candidates cannot be replanned. Revisions and source run IDs remain in state.
 An ambiguous dispatch is not blindly repeated; reconcile its recorded attempt.
+
+If a verifier bug blocks an already public candidate, normal replanning still
+refuses to replace it. After reviewed verifier fixes, a fresh assessment and
+explicit `approve=true,replan=true,recover_public_verification=true` can update
+its worker-code SHA only. The controller verifies and retains the original
+signed tag, commit, asset hashes, source scope and reserved version. A hashed
+recovery receipt authorizes verification only. The worker cannot rebuild,
+republish or merge dependencies on that path, and every public verification
+platform must still pass before consumers advance.
 
 The latest canonical stable SemVer release selects the `release-MAJOR.MINOR`
 line, prefixed with `monthly-patch-test-` in a fork rehearsal. Dates and the

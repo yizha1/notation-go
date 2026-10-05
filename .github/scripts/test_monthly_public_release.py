@@ -18,13 +18,13 @@ import gzip
 import hashlib
 import json
 import pathlib
-import subprocess
 import urllib.request
 
 from monthly_cli_smoke import smoke
 from monthly_release import GitHub, assert_tag, check_public_assets, git, validate_plan
 from monthly_release_checks import (
-    asset_names, checked, extract_binary, packaged_e2e, scan, verify_checksums, verify_metadata,
+    asset_names, checked, extract_binary, library_source_archive, packaged_e2e, scan,
+    verify_checksums, verify_metadata,
 )
 
 
@@ -66,10 +66,7 @@ def verify(plan, source, platform, evidence):
         if platform == "linux_amd64":
             packaged_e2e(source, binary, evidence / "packaged-e2e.log")
     else:
-        expected = subprocess.run(
-            ["git", "archive", "--format=tar", f"--prefix={project}-{plan['tag'].removeprefix('v')}/", plan["commit"]],
-            cwd=source, capture_output=True, check=True,
-        ).stdout
+        expected = library_source_archive(source, project, plan["tag"], plan["commit"])
         if gzip.decompress((download / archives[0]).read_bytes()) != expected:
             raise ValueError("Public library archive does not match the qualified source")
     (evidence / "verified.json").write_text(json.dumps({

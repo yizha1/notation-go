@@ -29,6 +29,17 @@ PLATFORMS = ("darwin_amd64", "darwin_arm64", "linux_amd64",
              "linux_arm64", "linux_armv7", "windows_amd64")
 
 
+def library_source_archive(source, project, tag, commit):
+    archive = subprocess.run(
+        ["git", "-c", "core.autocrlf=false", "archive", "--format=tar",
+         f"--prefix={project}-{tag.removeprefix('v')}/", commit],
+        cwd=source, capture_output=True,
+    )
+    if archive.returncode:
+        raise ValueError(f"Source archive failed: {archive.stderr.decode('utf-8')}")
+    return archive.stdout
+
+
 def checked(command, evidence, cwd=None, environment=None, input_text=None):
     result = subprocess.run(
         [str(item) for item in command], cwd=cwd, env=environment, input=input_text,

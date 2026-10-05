@@ -538,13 +538,16 @@ def baseline_plan(api, repository, month, mode, state=None):
     }
 
 
-def inventory(api, repository, branch, authorization=None):
+def inventory(api, repository, branch, authorization=None, merged=()):
     result = []
     for pull in api.pulls(repository, branch, "closed"):
         eligible = dependabot(pull, branch)
         if not eligible and authorization:
-            from notation_release_controller import fork_propagation_pull
-            eligible = fork_propagation_pull(api, repository, pull, authorization)
+            from notation_release_controller import fork_propagation_pull, scoped_pull
+            recorded = any(item["number"] == pull["number"] for item in merged)
+            eligible = (scoped_pull(api, repository, pull, authorization, merged)
+                        if recorded and pull.get("merged_at") else
+                        fork_propagation_pull(api, repository, pull, authorization))
         if eligible and pull.get("merged_at"):
             if not SHA.fullmatch(pull.get("merge_commit_sha") or ""):
                 raise ValueError("Merged Dependabot PR has no valid source commit")
@@ -714,7 +717,7 @@ def prepare(api, repository, mode, month, directory, output, start=False, reconc
             state.update(status="waiting", reason="; ".join(waiting))
             cycle.save(state)
             return {**state, "action": "waiting"}
-        merged_pulls = inventory(api, repository, state["main"], authorization)
+        merged_pulls = inventory(api, repository, state["main"], authorization, state["merged"])
         if authorization:
             merged_pulls = [
                 item for item in merged_pulls

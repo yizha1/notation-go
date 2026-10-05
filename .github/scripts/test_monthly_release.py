@@ -265,6 +265,23 @@ class MonthlyReleaseTests(unittest.TestCase):
         ]
         self.assertEqual([item["number"] for item in release.inventory(api, REPO, "main")], [2, 1])
 
+    def test_reassessment_retains_recorded_producer_merge_without_reauthorizing_old_open_prs(self):
+        api = FakeGitHub()
+        producer = {**pull(14), "user": {"login": "test-actor"}, "merged_at": "2026-10-01T00:00:00Z",
+                    "merge_commit_sha": COMMIT}
+        api.closed_pulls = [producer]
+        authorization = {"snapshot": {"pulls": [], "merged": []}}
+        recorded = [{"number": 14, "commit": COMMIT}]
+        with patch("notation_release_controller.fork_propagation_pull", return_value=False):
+            self.assertEqual(release.inventory(api, REPO, "main", authorization, recorded),
+                             [{"number": 14, "commit": COMMIT, "merged_at": producer["merged_at"]}])
+            self.assertEqual(release.inventory(api, REPO, "main", authorization), [])
+            api.closed_pulls = [{**producer, "merged_at": None}]
+            self.assertEqual(release.inventory(api, REPO, "main", authorization, recorded), [])
+            api.closed_pulls = [{**producer, "merge_commit_sha": PREVIOUS}]
+            with self.assertRaisesRegex(ValueError, "Worker-approved dependency merge changed"):
+                release.inventory(api, REPO, "main", authorization, recorded)
+
     def test_dry_run_existing_ready_tag_recovery_is_strictly_read_only(self):
         api = FakeGitHub()
         api.issues = [{"body": body(plan()), "user": {"login": "test-actor"}}]

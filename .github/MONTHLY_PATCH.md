@@ -84,6 +84,9 @@ This lets a checked module CVE fix merge before Actions-only PRs that still
 scan the vulnerable base. The worker records every remaining blocker and waits
 without preparing a release candidate until all scoped PRs qualify. Rebasing
 an assessed PR still requires a fresh assessment and explicit replan.
+Pre-tag reassessment preserves the worker's previously recorded normal merges,
+including signed producer updates. Each closed PR must still match its exact
+recorded merge commit; an older plan cannot authorize a new or unmerged PR.
 
 Library packaging and public verification disable Git's automatic CRLF
 conversion for the archive command, without changing repository configuration.

@@ -266,7 +266,10 @@ steps before requesting an all-three publishing rehearsal:
    both isolated branches so it cannot race the monthly publisher.
 4. Enable fork issues and securely install the release token and signing key
    described above. Set the common actor/signer variables and rehearsal flags.
-   Do not enable monthly scheduling yet.
+   In each fork's Settings > Advanced Security, explicitly enable Dependabot
+   version updates. A configuration file alone does not enable updates on forks.
+   GitHub's official API does not expose this toggle, so the owner must confirm
+   it. Do not enable monthly scheduling yet.
 5. Use a local personal CLI login with access to secret metadata to run:
 
    ```sh
@@ -274,8 +277,10 @@ steps before requesting an all-three publishing rehearsal:
    ```
 
    This reads names, not secret values, and reports all remaining setup blockers
-   in one pass. READY means environment prerequisites exist, not that dependency
-   compatibility or release qualification has been waived.
+   in one pass. After confirming the Dependabot setting in all three forks, add
+   `--confirm-fork-dependabot-enabled`. READY means API-visible prerequisites
+   exist and the owner confirmed that setting, not that dependency compatibility,
+   actual update PR evidence, or release qualification has been waived.
 6. Let real Dependabot PRs supply needed third-party fixes. For an all-three trial,
    core needs a genuine dependency update. The controller never fabricates an
    empty core patch simply to exercise the DAG. Missing fixes or failed checks

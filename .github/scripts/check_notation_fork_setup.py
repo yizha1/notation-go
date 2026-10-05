@@ -36,7 +36,7 @@ def named_metadata(api, path, field):
     raise ValueError("Setup metadata exceeds the bounded pagination limit")
 
 
-def check(api, month):
+def check(api, month, dependabot_confirmed=False):
     result = {"schema": 1, "month": month, "repositories": {}, "ready": True}
     actors = {}
     for repository in controller.REPOSITORIES:
@@ -46,6 +46,8 @@ def check(api, month):
         blockers = []
         if not metadata["has_issues"]:
             blockers.append("Enable Issues")
+        if not dependabot_confirmed:
+            blockers.append("Enable Dependabot version updates in fork Settings > Advanced Security and confirm all three forks")
         if not controller.installed_worker(api, repository, automation):
             blockers.append("Install the current coordinated worker and fork propagation helpers on main")
         for branch in (baseline["main"], baseline["branch"]):
@@ -119,8 +121,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--month", default=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m"))
     parser.add_argument("--output", type=pathlib.Path)
+    parser.add_argument("--confirm-fork-dependabot-enabled", action="store_true",
+                        help="Owner confirmation that Dependabot version updates are enabled in all three fork settings")
     args = parser.parse_args()
-    result = check(release.GitHub(), args.month)
+    result = check(release.GitHub(), args.month, args.confirm_fork_dependabot_enabled)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

@@ -346,16 +346,23 @@ class SetupReadinessTests(unittest.TestCase):
             self.addCleanup(mocked.stop)
 
     def test_complete_fork_setup_is_ready_without_writes(self):
-        result = setup.check(self.api, MONTH)
+        result = setup.check(self.api, MONTH, dependabot_confirmed=True)
         self.assertTrue(result["ready"])
         self.assertEqual(set(result["repositories"]), set(controller.REPOSITORIES))
         self.assertEqual(self.api.writes, [])
+
+    def test_configuration_does_not_prove_dependabot_enabled_on_a_fork(self):
+        result = setup.check(self.api, MONTH)
+        self.assertFalse(result["ready"])
+        for state in result["repositories"].values():
+            self.assertEqual(len(state["blockers"]), 1)
+            self.assertIn("Enable Dependabot version updates", state["blockers"][0])
 
     def test_missing_branch_ci_and_token_are_reported_together(self):
         self.api.missing.update((f"repos/{CORE}/contents/.github/workflows/notation-fork-ci.yml",
                                  f"repos/{CLI}/branches/monthly-patch-test-release-1.3"))
         self.api.secrets[GO].remove("MONTHLY_PATCH_TOKEN")
-        result = setup.check(self.api, MONTH)
+        result = setup.check(self.api, MONTH, dependabot_confirmed=True)
         self.assertFalse(result["ready"])
         self.assertEqual(len(result["repositories"][CORE]["blockers"]), 2)
         self.assertIn("Install Actions secret MONTHLY_PATCH_TOKEN", result["repositories"][GO]["blockers"])
@@ -365,7 +372,7 @@ class SetupReadinessTests(unittest.TestCase):
         self.api.variables[CORE]["MONTHLY_PATCH_ACTOR"] = "other-actor"
         self.api.variables[CORE]["MONTHLY_PATCH_SIGNER_LOGIN"] = "other-actor"
         self.api.variables[GO]["MONTHLY_PATCH_SIGNER_LOGIN"] = "different-signer"
-        result = setup.check(self.api, MONTH)
+        result = setup.check(self.api, MONTH, dependabot_confirmed=True)
         self.assertFalse(result["ready"])
         self.assertIn("Use the same MONTHLY_PATCH_ACTOR as the CLI coordinator", result["repositories"][CORE]["blockers"])
         self.assertIn("Use the actor's signing identity for fork producer PRs", result["repositories"][GO]["blockers"])

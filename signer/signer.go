@@ -34,7 +34,7 @@ import (
 )
 
 // signingAgent is the unprotected header field used by signature.
-const signingAgent = "notation-go/1.3.2"
+const signingAgent = "notation-go/1.3.5-manual-review.20261018"
 
 // GenericSigner implements notation.Signer and embeds signature.Signer
 type GenericSigner struct {

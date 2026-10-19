@@ -24,14 +24,14 @@ permissions:
   pull-requests: read
 jobs:
   release:
-    uses: yizha1/notation/.github/workflows/monthly-patch-worker.yml@1e9c70c4e79597bae181bdd38ba28c75e380d0e0
+    uses: yizha1/notation/.github/workflows/monthly-patch-worker.yml@10131d7b43af6c51121b9bb9dbabc8cc21caf007
     with:
       mode: ${{ inputs.mode }}
       month: ${{ inputs.month }}
       controller_issue: '26'
       plan_id: d7a9cd8f0235aa78b2af278596a76a94f1ad38fff034bce1bfcc19800f62e9b3
       attempt: '1'
-      worker_sha: 1e9c70c4e79597bae181bdd38ba28c75e380d0e0
+      worker_sha: 10131d7b43af6c51121b9bb9dbabc8cc21caf007
     secrets:
       MONTHLY_PATCH_TOKEN: ${{ secrets.MONTHLY_PATCH_TOKEN }}
       MONTHLY_PATCH_SIGNING_KEY: ${{ secrets.MONTHLY_PATCH_SIGNING_KEY }}

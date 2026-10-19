@@ -17,7 +17,7 @@ require (
 
 require (
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.6 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -25,4 +25,4 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 )
 
-replace github.com/notaryproject/notation-core-go => github.com/yizha1/notation-core-go v1.3.2-monthly-test.202610
+replace github.com/notaryproject/notation-core-go => github.com/yizha1/notation-core-go v1.3.3-manual-review.20261018
